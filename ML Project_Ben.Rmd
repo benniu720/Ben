@@ -1,0 +1,129 @@
+##Practical Machine Learning Course Project   
+**Ben Niu**  
+
+###Executive Summary:  
+The task of this project is to predict the manner in which 6 participants did the exercises, as denoted as *"classe"* variable in the dataset. There are many variables in the original dataset, some of them are definitely more sensitive than others in predicting the outcome, so *Principal component analysis* might be necessary. **Model 1** used trees as classifier and showed that without PCA the accurary was relatively low. **Model 2** adopted PCA and showed improved accuracy. **Model 3** used boosting as classifier coupled with PCA, which turned out to have the highest accuracy. All training control used the *10-fold Cross Validation* without repeat.  
+
+###Analyses:  
+
+####Data Prep  
+Loading the **ggplot2**, **caret**, **xtable** packages.  
+```{r loading package, echo=FALSE, results='hide', message=FALSE, warning=FALSE}
+library(ggplot2)
+library(caret)
+library(xtable)
+library(rpart)
+library(gbm)
+```
+Download **training** and **testing** data, read and subset the data. 
+```{r downloading and reading, echo=FALSE, results='asis'}
+download.file(url="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile="/Users/benniu/Desktop/ML Project/training.csv", method="curl")
+download.file(url="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",destfile="/Users/benniu/Desktop/ML Project/testing.csv", method="curl")
+training<-read.csv("/Users/benniu/Desktop/ML Project/training.csv")
+testing<-read.csv("/Users/benniu/Desktop/ML Project/testing.csv")
+TRAIN<-subset(training, select=-1)
+TEST<-subset(testing, select=-1)
+```
+
+####Predictor Selection
+Use *near zero variance identification* to filter out less important variables.  
+```{r nzv ident, echo=TRUE, results='asis'}
+nzv<-nearZeroVar(TRAIN, saveMetrics=TRUE)
+good.var<-subset(nzv, nzv=="FALSE")
+TRAIN.goodvar<-subset(TRAIN, select=row.names(good.var))
+```
+Remove remaining variables with more than 50% being **"NA"**  
+```{r remove NA, echo=TRUE, results='asis'}
+good<-NULL
+for(i in 1:ncol(TRAIN.goodvar)){
+  if(sum(is.na(as.character(TRAIN.goodvar[,i]))) < length(TRAIN.goodvar[,i])*0.5){
+    good0<-names(TRAIN.goodvar)[i]
+    good<-c(good, good0)}
+}
+TRAIN.goodvar<-subset(TRAIN.goodvar, select=good)
+```
+
+####Model 1: Predict with trees (rpart) and K-fold cross validation, without PCA
+```{r Trees and K-fold CV, echo=TRUE, results='asis'}
+## Use 10-fold CV
+set.seed(11445)
+tc<-trainControl(method="cv", number=10)
+## hold 20% of the training data to compute the accurary as a testimony of the model.
+sub<-createDataPartition(y=TRAIN.goodvar$classe, p=0.8, list=FALSE)
+train.sub<-TRAIN.goodvar[sub,]
+val.sub<-TRAIN.goodvar[-sub,]
+Model.rpart1<-train(train.sub$classe~., method="rpart", data=train.sub[,-58], trControl=tc)
+```
+```{r rpart1 results, echo=FALSE, results='asis'}
+DF1<-data.frame("Pred"=predict(Model.rpart1, val.sub[,-58]), "Ref"=val.sub$classe)
+Accu1<-round(length(which(DF1$Pred==DF1$Ref))/ length(DF1$Ref),2)
+results1<-round(xtable(Model.rpart1$results),3)
+print(results1, comment=FALSE, type="html")
+```
+So the accuracy of *Model 1* is 0.55 by choosing the cp 0.040.  
+
+####Model 2: Predict with trees (rpart) and K-fold cross validation, with PCA
+```{r PCA with Trees and K-fold CV, echo=TRUE, results='asis'}
+## Perform PCA to reduce variable dimensions.
+## Use 10-fold CV
+set.seed(11445)
+tc<-trainControl(method="cv", number=10)
+sub<-createDataPartition(y=TRAIN.goodvar$classe, p=0.8, list=FALSE)
+train.sub<-TRAIN.goodvar[sub,]
+val.sub<-TRAIN.goodvar[-sub,]
+PCA<-preProcess(train.sub[,-58], method="pca",thresh=0.95)
+PCA.train<-predict(PCA, train.sub[,-58])
+Model.rpart2<-train(train.sub$classe~., method="rpart", data=PCA.train, trControl=tc)
+```
+```{r rpart2 results, echo=FALSE, results='asis'}
+PCA.val<-predict(PCA, val.sub[,-58]) ## apply same PCA to val dataset.
+DF2<-data.frame("Pred"=predict(Model.rpart2, PCA.val), "Ref"=val.sub$classe)
+Accu2<-length(which(DF2$Pred==DF2$Ref))/ length(DF2$Ref)
+results2<-round(xtable(Model.rpart2$results),3)
+print(results2, comment=FALSE, type="html")
+```
+The accuracy of *Model 2* is 0.68 by choosing cp as 0.013.  
+Figure showing how accuracy changes as cp is tuned:  
+```{r plot1, echo=FALSE, results='asis', fig.height=3, fig.width=5}
+ggplot(Model.rpart2)
+```
+
+####Model 3: Predict with Boosting (gbm) and K-fold CV, with PCA  
+```{r gbm, echo=TRUE, results='asis'}
+set.seed(11445)
+tc<-trainControl(method="cv", number=10)
+sub<-createDataPartition(y=TRAIN.goodvar$classe, p=0.8, list=FALSE)
+train.sub<-TRAIN.goodvar[sub,]
+val.sub<-TRAIN.goodvar[-sub,]
+PCA<-preProcess(train.sub[,-58], method="pca",thresh=0.95)
+PCA.train<-predict(PCA, train.sub[,-58])
+Model.gbm<-train(train.sub$classe~., method="gbm", data=PCA.train, trControl=tc, verbose=FALSE)
+```
+```{r gbm results, echo=FALSE, results='asis'}
+PCA.val<-predict(PCA, val.sub[,-58])
+DF3<-data.frame("Pred"=predict(Model.gbm, PCA.val), "Ref"=val.sub$classe)
+Accu3<-length(which(DF3$Pred==DF3$Ref))/ length(DF3$Ref)
+results3<-round(xtable(Model.gbm$results),3)
+print(results3, comment=FALSE, type="html")
+```
+The accuracy of *Model 3* can reach 0.91 with shrinkage being 0.1 constant, interaction depth being 3 and n.minobsinnode being 10, n.trees being 150.  
+Figure showing details of *Model 3* is here:  
+```{r plot2, echo=FALSE, results='asis', fig.height=3, fig.width=5}
+ggplot(Model.gbm)
+```
+
+####Conclusion  
+The table below showed the model accuracies, and the test outcomes by using the 20% hold-out samples.  
+```{r table, echo=FALSE, results='asis'}
+TB<-data.frame("Model Accuracy"=c(0.546, 0.681, 0.909), "Test Accuracy"=c(Accu1, Accu2, Accu3))
+row.names(TB)<-c("Model 1", "Model 2", "Model 3")
+table<-round(xtable(TB),3)
+print(table, comment=FALSE, type="html")
+```
+Clearly the *Model 3* that using Boosting is a much better classifier. This one should be applied to the real test dataset and predict.  
+
+
+
+
+
+
